@@ -76,9 +76,13 @@ CAN_ERROR_EXT_STRUCT = struct.Struct("<HHLBBBxLLH2x8s")
 # group name length, marker name length, description length
 GLOBAL_MARKER_STRUCT = struct.Struct("<LLL3xBLLL12x")
 
+SYS_VARIABLE_HEADER_STRUCT = struct.Struct("<LL8xLL8x")
+GPS_BASE_STRUCT = struct.Struct("<LL8xLL19x44s")
+GPS_EXTEND_STRUCT = struct.Struct("<LL8xLL28x52s")
 
 CAN_MESSAGE = 1
 LOG_CONTAINER = 10
+SYS_VARIABLE = 72
 CAN_ERROR_EXT = 73
 CAN_MESSAGE2 = 86
 GLOBAL_MARKER = 96
@@ -221,6 +225,8 @@ class BLFReader(BinaryIOMessageReader):
         unpack_can_fd_64_msg = CAN_FD_MSG_64_STRUCT.unpack_from
         can_fd_64_msg_size = CAN_FD_MSG_64_STRUCT.size
         unpack_can_error_ext = CAN_ERROR_EXT_STRUCT.unpack_from
+        unpack_sys_var_header = SYS_VARIABLE_HEADER_STRUCT.unpack_from
+        sys_var_header_size = SYS_VARIABLE_HEADER_STRUCT.size
 
         start_timestamp = self.start_timestamp
         max_pos = len(data)
@@ -350,6 +356,16 @@ class BLFReader(BinaryIOMessageReader):
                     dlc=dlc2len(dlc),
                     data=data[pos : pos + valid_bytes],
                     channel=channel - 1,
+                )
+            elif obj_type == SYS_VARIABLE:
+                _, _, name_length, data_length = unpack_sys_var_header(data, pos)
+                pos += sys_var_header_size + name_length
+                yield Message(
+                    timestamp=timestamp,
+                    arbitration_id=-1,
+                    dlc=name_length,
+                    data=data[pos : pos + data_length],
+                    channel=-1,
                 )
 
             pos = next_pos
@@ -490,6 +506,26 @@ class BLFWriter(FileIOMessageWriter):
                 can_data,
             )
             self._add_object(CAN_FD_MESSAGE, data, msg.timestamp)
+        elif arb_id == -1:
+            if len(msg.data) == 44:
+                data = GPS_BASE_STRUCT.pack(
+                    7,  # type (ByteArray)
+                    0,  # representation
+                    msg.dlc,  # nameLength
+                    len(msg.data),  # dataLength
+                    can_data,
+                )
+            elif len(msg.data) == 52:
+                data = GPS_EXTEND_STRUCT.pack(
+                    7,  # type (ByteArray)
+                    0,  # representation
+                    msg.dlc,  # nameLength
+                    len(msg.data),  # dataLength
+                    can_data,
+                )
+            else:
+                return
+            self._add_object(SYS_VARIABLE, data, msg.timestamp)
         else:
             data = CAN_MSG_STRUCT.pack(channel, flags, msg.dlc, arb_id, can_data)
             self._add_object(CAN_MESSAGE, data, msg.timestamp)
